@@ -1,4 +1,3 @@
-
 SELECT
     RECEIVE_PATH_NAME,
     SUM(CONTRACT_COUNT) AS total_contract,
