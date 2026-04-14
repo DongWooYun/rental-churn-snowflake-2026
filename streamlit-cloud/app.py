@@ -23,17 +23,13 @@ def load_data():
     v03 = pd.read_csv("streamlit-cloud/data/v03_funnel.csv")
     v06 = pd.read_csv("streamlit-cloud/data/v06_category.csv")
     v04 = pd.read_csv("streamlit-cloud/data/v04_channel.csv")
-
     for df in [v03, v06, v04]:
         df.columns = df.columns.str.lower()
-
     v03["year_month"] = pd.to_datetime(v03["year_month"])
     v06["year_month"] = pd.to_datetime(v06["year_month"])
     v04["year_month"] = pd.to_datetime(v04["year_month"])
-
     v03["cvr_3"] = v03["open_count"] / v03["registend_count"].replace(0, float("nan"))
     v06["open_cvr"] = v06["open_count"] / v06["contract_count"].replace(0, float("nan"))
-
     return v03, v06, v04
 
 v03, v06, v04 = load_data()
@@ -134,36 +130,92 @@ elif page == "P2 · 변곡점 원인":
 elif page == "P3 · 상품 분석":
     st.title("P3 · 상품 분석")
     st.markdown("### 어떤 상품이 CVR을 끌어내리나?")
-    top15 = prod_df.head(15)
+
+    top15 = prod_df.head(15).copy()
+    total_contract = top15["contract"].sum()
+    top15["volume_share"] = top15["contract"] / total_contract * 100
+
     def cvr_color(v):
         if v >= 65:   return "#27ae60"
         elif v >= 40: return "#f39c12"
         else:         return "#e74c3c"
-    colors = [cvr_color(v) for v in top15["cvr_pct"]]
-    col1, col2 = st.columns([2, 1])
+
+    # 버블차트
+    st.markdown("#### 📊 CVR × 볼륨 비중 매트릭스 (버블 크기 = 계약건수 비중)")
+    fig = go.Figure()
+    for _, row in top15.iterrows():
+        fig.add_trace(go.Scatter(
+            x=[row["cvr_pct"]],
+            y=[row["volume_share"]],
+            mode="markers+text",
+            name=row["rental_sub_category"],
+            text=[row["rental_sub_category"]],
+            textposition="top center",
+            textfont=dict(size=10),
+            marker=dict(
+                size=row["volume_share"] * 4 + 10,
+                color=cvr_color(row["cvr_pct"]),
+                opacity=0.8,
+                line=dict(color="white", width=1.5),
+            ),
+            hovertemplate=(
+                f"<b>{row['rental_sub_category']}</b><br>"
+                f"CVR: {row['cvr_pct']:.1f}%<br>"
+                f"볼륨 비중: {row['volume_share']:.1f}%<br>"
+                f"계약건수: {row['contract']:,.0f}건"
+                "<extra></extra>"
+            ),
+        ))
+    fig.add_vline(x=65, line_dash="dot", line_color="#27ae60",
+                  annotation_text="우수 기준 65%", annotation_font_color="#27ae60")
+    fig.add_vline(x=40, line_dash="dot", line_color="#f39c12",
+                  annotation_text="위험 기준 40%", annotation_font_color="#f39c12")
+    fig.update_layout(
+        height=520, template="plotly_dark",
+        xaxis=dict(title="CVR_3 (%)", range=[0, 105], gridcolor="#1e3a5f"),
+        yaxis=dict(title="볼륨 비중 (%)", gridcolor="#1e3a5f"),
+        showlegend=False, margin=dict(t=20),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 바차트 2개
+    st.markdown("#### 📋 상품별 CVR + 볼륨 비중 상세")
+    col1, col2 = st.columns(2)
     with col1:
-        fig = go.Figure(go.Bar(
+        fig2 = go.Figure(go.Bar(
             x=top15["rental_sub_category"], y=top15["cvr_pct"],
-            marker_color=colors,
+            marker_color=[cvr_color(v) for v in top15["cvr_pct"]],
             text=[f"{v:.1f}%" for v in top15["cvr_pct"]],
             textposition="outside",
         ))
-        fig.add_hline(y=65, line_dash="dot", line_color="#27ae60",
-                      annotation_text="우수 65%", annotation_font_color="#27ae60")
-        fig.add_hline(y=40, line_dash="dot", line_color="#f39c12",
-                      annotation_text="위험 40%", annotation_font_color="#f39c12")
-        fig.update_layout(title="상품별 CVR_3 — 계약건수 TOP 15", height=450, template="plotly_dark",
-                          xaxis=dict(tickangle=-30), yaxis=dict(title="CVR (%)", range=[0, 110]),
-                          showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        fig2.add_hline(y=65, line_dash="dot", line_color="#27ae60")
+        fig2.add_hline(y=40, line_dash="dot", line_color="#f39c12")
+        fig2.update_layout(title="CVR_3 (%)", height=380, template="plotly_dark",
+                           xaxis=dict(tickangle=-30), yaxis=dict(range=[0, 110]),
+                           showlegend=False)
+        st.plotly_chart(fig2, use_container_width=True)
     with col2:
-        st.markdown("#### 전략 분류")
-        good = top15[top15["cvr_pct"] >= 65]["rental_sub_category"].tolist()
-        warn = top15[(top15["cvr_pct"] >= 40) & (top15["cvr_pct"] < 65)]["rental_sub_category"].tolist()
-        bad  = top15[top15["cvr_pct"] < 40]["rental_sub_category"].tolist()
-        st.success("✅ **Defense/Leverage** (65%+)\n\n" + ", ".join(good))
-        if warn: st.warning("⚠️ **개선 필요** (40~65%)\n\n" + ", ".join(warn))
-        st.error("❌ **Recovery 필요** (~40%)\n\n" + ", ".join(bad))
+        fig3 = go.Figure(go.Bar(
+            x=top15["rental_sub_category"], y=top15["volume_share"],
+            marker_color=[cvr_color(v) for v in top15["cvr_pct"]],
+            text=[f"{v:.1f}%" for v in top15["volume_share"]],
+            textposition="outside",
+        ))
+        fig3.update_layout(title="볼륨 비중 (%)", height=380, template="plotly_dark",
+                           xaxis=dict(tickangle=-30),
+                           yaxis=dict(range=[0, top15["volume_share"].max()*1.3]),
+                           showlegend=False)
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # 전략 분류
+    st.markdown("#### 🎯 전략 분류")
+    c1, c2, c3 = st.columns(3)
+    good = top15[top15["cvr_pct"] >= 65]["rental_sub_category"].tolist()
+    warn = top15[(top15["cvr_pct"] >= 40) & (top15["cvr_pct"] < 65)]["rental_sub_category"].tolist()
+    bad  = top15[top15["cvr_pct"] < 40]["rental_sub_category"].tolist()
+    c1.success("✅ **Defense/Leverage** (65%+)\n\n" + ", ".join(good))
+    if warn: c2.warning("⚠️ **개선 필요** (40~65%)\n\n" + ", ".join(warn))
+    c3.error("❌ **Recovery 필요** (~40%)\n\n" + ", ".join(bad))
 
 elif page == "P4 · 전략 가이드":
     st.title("P4 · Retention 전략 가이드")
